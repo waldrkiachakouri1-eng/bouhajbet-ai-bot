@@ -7,7 +7,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
 // ========== المستخدمون المصرح لهم ==========
 const authorizedUsers = new Set([
-  8569323647,  // معرفك الشخصي
+  8569323647, // معرفك الشخصي
 ]);
 
 // ========== تنظيف النص ==========
@@ -18,20 +18,18 @@ function cleanText(text) {
 // ========== استخراج الإحصائيات ==========
 function extractStats(text) {
   const cleaned = cleanText(text);
-  function parsePercent(match) { return match ? parseFloat(match[1])/100 : null; }
 
-  return {
-    avgHomeGoals: parseFloat((cleaned.match(/home\s+(\d+(\.\d+)?)\s+AVG Goals/i)||[2])[1]),
-    avgAwayGoals: parseFloat((cleaned.match(/away\s+(\d+(\.\d+)?)\s+AVG Goals/i)||[2])[1]),
-    bttsPercent: parsePercent(cleaned.match(/(\d+(\.\d+)?)\s*%\s*BTTS/i)) || 0.45,
-    over25Percent: parsePercent(cleaned.match(/(\d+(\.\d+)?)\s*%\s*\+2\.5 Goals/i)) || 0.45
-  };
+  const avgHomeGoals = parseFloat((cleaned.match(/home\s+(\d+(\.\d+)?)/i)||[1,2])[1]) || 0;
+  const avgAwayGoals = parseFloat((cleaned.match(/away\s+(\d+(\.\d+)?)/i)||[1,2])[1]) || 0;
+  const bttsPercent = parseFloat((cleaned.match(/(\d+(\.\d+)?)\s*%\s*BTTS/i)||[1,0])[1])/100 || 0.45;
+  const over25Percent = parseFloat((cleaned.match(/(\d+(\.\d+)?)\s*%\s*\+2\.5/i)||[1,0])[1])/100 || 0.45;
+
+  return { avgHomeGoals, avgAwayGoals, bttsPercent, over25Percent };
 }
 
 // ========== تحليل الأسواق وتحديد أفضل سوق ==========
 function analyzeMarkets(stats) {
   const markets = [];
-
   const totalAvgGoals = stats.avgHomeGoals + stats.avgAwayGoals;
 
   // Over 2.5
@@ -59,13 +57,13 @@ function analyzeMarkets(stats) {
   return { markets, bestMarket };
 }
 
-// ========== مراقبة التغييرات ==========
+// ========== إشعار التغيرات ==========
 let lastBestValue = null;
 async function notifyChanges(chatId, statsText) {
   const { bestMarket } = analyzeMarkets(extractStats(statsText));
   if (lastBestValue !== bestMarket.value) {
     lastBestValue = bestMarket.value;
-    await bot.sendMessage(chatId, `🔔 *تحديث القيمة الأفضل:*\nأفضل سوق الآن: ${bestMarket.market}\nتوصية: ${Array.isArray(bestMarket.recommendation)?bestMarket.recommendation.map(c=>c.score).join(', '):bestMarket.recommendation}\nثقة: ${Array.isArray(bestMarket.confidence)?bestMarket.confidence.join('% / ')+'%':bestMarket.confidence+'%'}\n`, { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, `🔔 *تحديث القيمة الأفضل:*\nأفضل سوق: ${bestMarket.market}\nتوصية: ${Array.isArray(bestMarket.recommendation)?bestMarket.recommendation.map(c=>c.score).join(', '):bestMarket.recommendation}\nثقة: ${Array.isArray(bestMarket.confidence)?bestMarket.confidence.join('% / ')+'%':bestMarket.confidence+'%'}\n`, { parse_mode: 'Markdown' });
   }
 }
 
@@ -81,7 +79,6 @@ bot.on('message', async (msg) => {
   bot.sendChatAction(chatId, 'typing');
 
   try {
-    // جلب بيانات OddAlerts إذا كان الرابط موجود
     let statsText = text.includes('oddalert') ? (await axios.get(text)).data : text;
     await notifyChanges(chatId, statsText);
   } catch(err) {
