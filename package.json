@@ -1,0 +1,13 @@
+{
+  "name": "bouhajbet-ai-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for match statistics analysis",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.61.0",
+    "dotenv": "^16.0.0"
+  }
+}
