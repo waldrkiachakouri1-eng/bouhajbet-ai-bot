@@ -4,7 +4,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
 // ========== المستخدمون المصرح لهم ==========
 const authorizedUsers = new Set([
-  // ضع معرفك هنا
+  8569323647,  // هذا هو معرفك
 ]);
 
 // ========== تنظيف النص ==========
