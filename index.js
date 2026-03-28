@@ -1,90 +1,149 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const axios = require('axios');
-const cheerio = require('cheerio');
 
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-// ========== المستخدمون المصرح لهم ==========
+// ========== قائمة المستخدمين المصرح لهم ==========
 const authorizedUsers = new Set([
-  8569323647, // معرفك الشخصي
+  8569323647  // معرفك الشخصي
 ]);
 
-// ========== تنظيف النص ==========
-function cleanText(text) {
-  return text.replace(/[^\d.%+\sA-Za-z]/g, ' ').replace(/\s+/g, ' ').trim();
+// ========== دالة استخراج كل الإحصائيات من OddAlerts ==========
+function extractOddAlertsStats(text) {
+  const lines = text.split('\n');
+  let statsSection = [];
+  let inStats = false;
+
+  for (let line of lines) {
+    if (line.includes('Stats') && line.includes('Timings')) {
+      inStats = true;
+      continue;
+    }
+    if (inStats && line.includes('Form')) break;
+    if (inStats) statsSection.push(line);
+  }
+
+  const statsText = statsSection.join('\n');
+
+  // استخراج الأرقام بدقة عالية مهما كانت صياغتها
+  const numbers = statsText.match(/-?\d+\.?\d*/g)?.map(n => parseFloat(n)) || [];
+
+  // تعيين القيم الأساسية
+  const avgHomeGoals = numbers[0] ?? 2.0;
+  const avgAwayGoals = numbers[1] ?? 2.0;
+  const scoredHome = numbers[2] ?? 0;
+  const scoredAway = numbers[3] ?? 0;
+  const bttsPercent = numbers[4] ?? 45;
+  const over25Percent = numbers[5] ?? 45;
+  const homeCleanSheet = numbers[6] ?? 0;
+  const awayCleanSheet = numbers[7] ?? 0;
+  const homeScoredPlus05 = numbers[8] ?? 0;
+  const awayScoredPlus05 = numbers[9] ?? 0;
+
+  return {
+    avgHomeGoals,
+    avgAwayGoals,
+    scoredHome,
+    scoredAway,
+    bttsPercent,
+    over25Percent,
+    homeCleanSheet,
+    awayCleanSheet,
+    homeScoredPlus05,
+    awayScoredPlus05
+  };
 }
 
-// ========== استخراج الإحصائيات ==========
-function extractStats(text) {
-  const cleaned = cleanText(text);
-
-  const avgHomeGoals = parseFloat((cleaned.match(/home\s+(\d+(\.\d+)?)/i)||[1,2])[1]) || 0;
-  const avgAwayGoals = parseFloat((cleaned.match(/away\s+(\d+(\.\d+)?)/i)||[1,2])[1]) || 0;
-  const bttsPercent = parseFloat((cleaned.match(/(\d+(\.\d+)?)\s*%\s*BTTS/i)||[1,0])[1])/100 || 0.45;
-  const over25Percent = parseFloat((cleaned.match(/(\d+(\.\d+)?)\s*%\s*\+2\.5/i)||[1,0])[1])/100 || 0.45;
-
-  return { avgHomeGoals, avgAwayGoals, bttsPercent, over25Percent };
-}
-
-// ========== تحليل الأسواق وتحديد أفضل سوق ==========
-function analyzeMarkets(stats) {
-  const markets = [];
+// ========== دالة التحليل الذكي + اختيار أفضل سوق ==========
+function analyzeMatch(statsText) {
+  const stats = extractOddAlertsStats(statsText);
   const totalAvgGoals = stats.avgHomeGoals + stats.avgAwayGoals;
 
-  // Over 2.5
-  const over25Conf = Math.min(95, Math.floor(totalAvgGoals/5*100));
-  markets.push({ market: "Over 2.5 Goals", recommendation: totalAvgGoals>=3?"Yes ✅":"No ❌", confidence: over25Conf, value: over25Conf*totalAvgGoals });
+  let recommendation = "";
+  let confidence = 0;
 
-  // BTTS
-  const bttsConf = Math.min(95, Math.floor(stats.bttsPercent*100));
-  markets.push({ market: "BTTS", recommendation: stats.bttsPercent>=0.5?"Yes ✅":"No ❌", confidence: bttsConf, value: bttsConf*stats.bttsPercent });
-
-  // Correct Score تقريبي
-  const homeG = Math.round(stats.avgHomeGoals);
-  const awayG = Math.round(stats.avgAwayGoals);
-  const correctScores = [
-    { score: `${homeG}-${awayG}`, probability: 40 },
-    { score: `${homeG}-${awayG+1}`, probability: 25 },
-    { score: `${homeG+1}-${awayG}`, probability: 20 }
-  ];
-  markets.push({ market: "Correct Score", recommendation: correctScores, confidence: correctScores.map(c=>c.probability), value: Math.max(...correctScores.map(c=>c.probability)) });
-
-  // اختيار أفضل سوق تلقائياً حسب القيمة
-  markets.sort((a,b)=>b.value-a.value);
-  const bestMarket = markets[0];
-
-  return { markets, bestMarket };
-}
-
-// ========== إشعار التغيرات ==========
-let lastBestValue = null;
-async function notifyChanges(chatId, statsText) {
-  const { bestMarket } = analyzeMarkets(extractStats(statsText));
-  if (lastBestValue !== bestMarket.value) {
-    lastBestValue = bestMarket.value;
-    await bot.sendMessage(chatId, `🔔 *تحديث القيمة الأفضل:*\nأفضل سوق: ${bestMarket.market}\nتوصية: ${Array.isArray(bestMarket.recommendation)?bestMarket.recommendation.map(c=>c.score).join(', '):bestMarket.recommendation}\nثقة: ${Array.isArray(bestMarket.confidence)?bestMarket.confidence.join('% / ')+'%':bestMarket.confidence+'%'}\n`, { parse_mode: 'Markdown' });
+  // أفضل سوق تلقائي (Value Bet logic)
+  if (totalAvgGoals >= 4.5 || stats.over25Percent > 70) {
+    recommendation = "Over 2.5 Goals ✅ (Value Bet)";
+    confidence = Math.min(95, Math.floor((totalAvgGoals / 6) * 100));
+  } else if (stats.bttsPercent >= 60) {
+    recommendation = "BTTS Yes ✅ (Value Bet)";
+    confidence = Math.min(90, stats.bttsPercent);
+  } else {
+    recommendation = "BTTS or Over 1.5 Goals ✅";
+    confidence = 70;
   }
+
+  return {
+    recommendation,
+    confidence,
+    totalAvgGoals,
+    stats
+  };
 }
 
-// ========== التعامل مع الرسائل ==========
-bot.on('message', async (msg) => {
+// ========== التحقق من الصلاحية ==========
+function isAuthorized(userId) {
+  return authorizedUsers.has(userId);
+}
+
+// ========== أوامر البوت ==========
+bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+  if (isAuthorized(userId)) {
+    bot.sendMessage(chatId, `
+🤖 *BouhajBet AI - محلل المباريات الذكي* 🎯
+✅ أنت مستخدم مصرح لك!
+📊 أرسل إحصائيات المباراة من OddAlerts وسأحللها بدقة عالية.
+`, { parse_mode: 'Markdown' });
+  } else {
+    bot.sendMessage(chatId, `🚫 غير مصرح لك.`, { parse_mode: 'Markdown' });
+  }
+});
+
+// ========== معالجة الرسائل للتحليل ==========
+bot.on('message', async (msg) => {
   const text = msg.text;
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
 
   if (!text || text.startsWith('/')) return;
-  if (!authorizedUsers.has(userId)) return bot.sendMessage(chatId, '🚫 غير مصرح. أنت غير مدرج كمستخدم.');
+  if (!isAuthorized(userId)) return bot.sendMessage(chatId, `🚫 غير مصرح.`, { parse_mode: 'Markdown' });
 
   bot.sendChatAction(chatId, 'typing');
 
   try {
-    let statsText = text.includes('oddalert') ? (await axios.get(text)).data : text;
-    await notifyChanges(chatId, statsText);
-  } catch(err) {
+    const analysis = analyzeMatch(text);
+    const stats = analysis.stats;
+
+    const response = `
+🎯 *توصية الذكاء الاصطناعي:* 
+${analysis.recommendation}
+
+📊 *نسبة الثقة:* ${analysis.confidence}%
+
+📈 *المؤشرات الرئيسية:*
+• متوسط أهداف الفريق أ: ${stats.avgHomeGoals}
+• متوسط أهداف الفريق ب: ${stats.avgAwayGoals}
+• مجموع المتوسط: ${analysis.totalAvgGoals}
+• احتمالية BTTS: ${stats.bttsPercent}%
+• احتمالية Over 2.5: ${stats.over25Percent}%
+
+📂 JSON جاهز للبوت:
+\`\`\`
+${JSON.stringify(stats, null, 2)}
+\`\`\`
+
+---
+🤖 *BouhajBet AI* - تحليل دقيق من OddAlerts
+    `;
+
+    await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+  } catch (err) {
     console.error(err);
-    bot.sendMessage(chatId, '❌ حدث خطأ، الرجاء إرسال الرابط أو الإحصائيات مرة أخرى.');
+    bot.sendMessage(chatId, '❌ حدث خطأ. الرجاء إرسال الإحصائيات مرة أخرى.');
   }
 });
 
-console.log('🚀 BouhajBet AI Hyper Running - معرفك مصرح والذكاء الخارق يعمل الآن!');
+console.log('🚀 BouhajBet AI Bot running with full OddAlerts support and Value Bet logic!');
