@@ -5,7 +5,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
 // ========== قائمة المستخدمين المصرح لهم ==========
 const authorizedUsers = new Set([
-  // ضع معرفك هنا بعد الحصول عليه من /id
+  8569323647,  // هذا هو معرفك
 ]);
 
 // ========== دالة استخراج الأرقام من OddAlerts ==========
